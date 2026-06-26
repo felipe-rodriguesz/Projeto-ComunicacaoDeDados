@@ -70,6 +70,13 @@ Para finalizarmos o projeto e conseguirmos a nota bônus, precisamos integrar o 
 
 ---
 
+## 📚 Documentação Técnica (Novo)
+Para que não falte absolutamente nada para a equipe e tudo flua usando as melhores práticas:
+1. Leiam o documento [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): Ele explica **o porquê** tomamos cada uma das decisões do projeto (como o atraso do LDR, a decisão de usar NRZ-L fixo no cabeçalho e a justificativa para o uso de timers ao invés de delays).
+2. Leiam o documento [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md): Ele explica o fluxo de **GitHub Flow** que vamos utilizar, como abrir Pull Requests e as regras de ouro para não travar a interrupção do Arduino na hora de commitar seus trechos de código.
+
+---
+
 ## 🛠️ Como Clonar e Executar
 
 1. Clone o repositório na sua máquina:
