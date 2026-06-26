@@ -70,7 +70,39 @@ Para finalizarmos o projeto e conseguirmos a nota bônus, precisamos integrar o 
 
 ---
 
-## 📚 Documentação Técnica (Novo)
+## 📁 Estrutura do Repositório e Organização dos Arquivos
+
+Para que todos saibam onde alterar o código e onde ler a documentação, o repositório foi organizado da seguinte forma:
+
+```text
+/
+├── README.md               # Este arquivo principal com o resumo, status e divisão de tarefas.
+├── docs/                   # Pasta dedicada a toda a documentação teórica do projeto.
+│   ├── ARCHITECTURE.md     # Documento explicando o PORQUÊ tomamos cada decisão (hardware e protocolo).
+│   └── CONTRIBUTING.md     # Regras de ouro de código e passos de como fazer os Commits e Pull Requests.
+├── libs/                   # Pasta para bibliotecas e lógicas compartilhadas.
+│   └── CRC16/              
+│       ├── crc16.h         # Declaração (header) do algoritmo de validação de pacotes.
+│       └── crc16.cpp       # Implementação matemática isolada do CRC-16-CCITT.
+└── src/                    # Pasta que contém os códigos-fonte C++ que rodam nas placas.
+    ├── tx_arduino/         # Projeto da placa Emissora.
+    │   ├── tx_arduino.ino  # Script principal do Transmissor (Lógica do LED e Timers).
+    │   ├── crc16.h         # Cópia local da lib para a IDE do Arduino encontrar facilmente.
+    │   └── crc16.cpp       # Cópia local da lib.
+    └── rx_arduino/         # Projeto da placa Receptora.
+        ├── rx_arduino.ino  # Script principal do Receptor (Lógica do LDR, auto-calibração e Máquina de Estados).
+        ├── crc16.h         # Cópia local da lib.
+        └── crc16.cpp       # Cópia local da lib.
+```
+
+### O que tem nos códigos fonte?
+- **`tx_arduino.ino`:** Contém o buffer fixo da mensagem. Ele prepara o cabeçalho (adicionando os 4 bytes do preâmbulo e o byte de SFD) e empacota o texto fornecido pelo usuário via monitor serial, calculando o CRC no final. Possui um interrutor de temporizador (Timer1) que acende e apaga o pino do LED obedecendo exatamente à taxa de bits configurada.
+- **`rx_arduino.ino`:** Código complexo. Possui a lógica analógica para testar o escuro e o claro inicial (`setup()`), e define um limiar adaptativo. Usa uma Máquina de Estados Finita (FSM) no `loop()`: aguarda o preâmbulo, enquadra o pacote e valida se o CRC bateu.
+- **`crc16`:** Código puramente matemático e testável em qualquer computador, não usa bibliotecas do Arduino. Foi isolado para não misturar validação de protocolo com envio elétrico.
+
+---
+
+## 📚 Documentação Técnica (Leitura Obrigatória)
 Para que não falte absolutamente nada para a equipe e tudo flua usando as melhores práticas:
 1. Leiam o documento [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): Ele explica **o porquê** tomamos cada uma das decisões do projeto (como o atraso do LDR, a decisão de usar NRZ-L fixo no cabeçalho e a justificativa para o uso de timers ao invés de delays).
 2. Leiam o documento [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md): Ele explica o fluxo de **GitHub Flow** que vamos utilizar, como abrir Pull Requests e as regras de ouro para não travar a interrupção do Arduino na hora de commitar seus trechos de código.
