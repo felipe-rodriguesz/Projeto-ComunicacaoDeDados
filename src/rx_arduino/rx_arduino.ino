@@ -128,17 +128,42 @@ void loop() {
   // ── Sincronismo: detecta borda de subida do preâmbulo ────────────────────
   if (estado == ESPERA_SYNC) {
     if (analogRead(LDR_PIN) > limiar_adc) {
-      // Espera metade de um período de bit para centralizar a amostragem
-      // no meio de cada fatia de 50 ms (válido também para Manchester)
-      delayMicroseconds(BIT_TIME_US / 2);
-      Timer1.restart();
-      estado       = LENDO_PREAMBULO;
-      bit_count    = 0;
-      byte_montado = 0;
-      bits_totais_recebidos = 0;
-      nivel_fisico_anterior = 0;
-      manc_half    = 0;
-      Serial.println(F("[RX] Preambulo detectado. Sincronizando..."));
+      // 1. Anota o tempo do primeiro pulso ALTO (1º bit do preâmbulo)
+      uint32_t t0 = micros();
+
+      // 2. Aguarda a luz APAGAR (início do 2º bit '0'), com timeout de 200ms
+      while (analogRead(LDR_PIN) > limiar_adc && (micros() - t0) < 200000UL) {}
+
+      // 3. Calcula o tempo exato do 1º bit
+      uint32_t t1 = micros();
+      uint32_t bit_time_real = t1 - t0;
+
+      // Valida se o pulso durou um tempo razoável (entre 10ms e 200ms)
+      if (bit_time_real > 10000UL && bit_time_real < 200000UL) {
+        
+        // Estamos na borda de descida (início do 2º bit).
+        // Dá um delay de MEIO bit_time para centralizar a amostragem no meio do bit.
+        delayMicroseconds(bit_time_real / 2);
+
+        // Inicializa o Timer1 com o baud rate dinâmico descoberto.
+        // Como chamamos restart() no meio do 2º bit, a primeira interrupção (ISR)
+        // cairá exatamente no MEIO do 3º bit.
+        Timer1.initialize(bit_time_real);
+        Timer1.restart();
+
+        // Já "lemos" os 2 primeiros bits (obrigatoriamente 1 e 0 = 0b10 = 2).
+        byte_montado = 2;         
+        bit_count = 2;            
+        bits_totais_recebidos = 2; 
+        nivel_fisico_anterior = 0; // 2º bit era 0
+        
+        estado = LENDO_PREAMBULO;
+        manc_half = 0;
+
+        Serial.print(F("[RX] Auto-baud cravado! Bit_time adaptado: "));
+        Serial.print(bit_time_real);
+        Serial.println(F(" us"));
+      }
     }
   }
 
