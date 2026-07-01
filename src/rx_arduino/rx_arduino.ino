@@ -220,7 +220,6 @@ void loop() {
     // Armazena estado para a próxima iteração
     nivel_fisico_anterior = nivel_fisico;
     bits_totais_recebidos++;
-    }
   }
 }
 
