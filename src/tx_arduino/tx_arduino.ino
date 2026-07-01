@@ -20,6 +20,16 @@ volatile bool transmitindo = false;
 #define COD_NRZI 1
 #define COD_MANC 2
 
+// Quantidade de bits fixos do frame que SEMPRE vão em NRZ-L
+// Preambulo (4 bytes) + SFD (1 byte) + Header (1 byte) = 6 bytes = 48 bits
+#define BITS_FIXOS_NRZL 48
+
+// Estado da codificação selecionada para o frame atual (definido em preparar_frame)
+volatile uint8_t codificacao_atual_tx = COD_NRZL;
+// Último nível físico (HIGH/LOW) que foi escrito no LED. Necessário para o NRZ-I
+// saber se deve inverter ou manter o estado no próximo bit.
+volatile bool nivel_linha_anterior = LOW;
+
 void setup() {
   Serial.begin(9600);
   pinMode(LED_PIN, OUTPUT);
@@ -30,7 +40,8 @@ void setup() {
   Timer1.attachInterrupt(isr_transmite_bit);
   
   Serial.println("--- TX PRONTO ---");
-  Serial.println("Digite a mensagem (max 64 chars):");
+  Serial.println("Digite a mensagem (max 64 chars).");
+  Serial.println("Prefixo opcional 'I:' = NRZ-I, 'L:' = NRZ-L (padrao sem prefixo = NRZ-L).");
 }
 
 void loop() {
@@ -40,10 +51,29 @@ void loop() {
     mensagem[bytes_lidos] = '\0'; // Finaliza string C
     
     if (bytes_lidos > 0) {
-      preparar_frame(mensagem, bytes_lidos, COD_NRZL); // Etapa 1 usa NRZ-L
+      uint8_t codificacao_escolhida = COD_NRZL; // Padrao (compatibilidade com a Etapa 1)
+      char* msg_ptr = mensagem;
+      int tamanho_msg = bytes_lidos;
+
+      // Permite escolher a codificacao digitando "I:mensagem" ou "L:mensagem"
+      if (bytes_lidos > 2 && mensagem[1] == ':') {
+        if (mensagem[0] == 'I' || mensagem[0] == 'i') {
+          codificacao_escolhida = COD_NRZI;
+          msg_ptr = mensagem + 2;
+          tamanho_msg = bytes_lidos - 2;
+        } else if (mensagem[0] == 'L' || mensagem[0] == 'l') {
+          codificacao_escolhida = COD_NRZL;
+          msg_ptr = mensagem + 2;
+          tamanho_msg = bytes_lidos - 2;
+        }
+      }
+
+      preparar_frame(msg_ptr, tamanho_msg, codificacao_escolhida);
       transmitindo = true;
-      Serial.print("Enviando: ");
-      Serial.println(mensagem);
+      Serial.print("Enviando (");
+      Serial.print(codificacao_escolhida == COD_NRZI ? "NRZ-I" : "NRZ-L");
+      Serial.print("): ");
+      Serial.println(msg_ptr);
     }
   }
 }
@@ -58,23 +88,39 @@ void isr_transmite_bit() {
     uint8_t bit_idx = 7 - (bit_atual % 8); // MSB primeiro
     
     bool bit_val = (buffer_tx[byte_idx] >> bit_idx) & 0x01;
-    
-    // Etapa 1: Apenas NRZ-L (Bit 1 = Aceso, Bit 0 = Apagado)
-    // Nas próximas etapas, adicionaremos NRZ-I e Manchester aqui
-    digitalWrite(LED_PIN, bit_val ? HIGH : LOW);
-    
+    bool nivel_saida;
+
+    if (bit_atual < BITS_FIXOS_NRZL || codificacao_atual_tx == COD_NRZL) {
+      // Preambulo + SFD + Header sempre NRZ-L. Payload/CRC tambem, se essa foi
+      // a codificacao escolhida (comportamento original da Etapa 1, preservado).
+      nivel_saida = bit_val;
+    } else if (codificacao_atual_tx == COD_NRZI) {
+      // NRZ-I: bit 1 INVERTE o nivel anterior da linha, bit 0 MANTEM o nivel.
+      nivel_saida = bit_val ? !nivel_linha_anterior : nivel_linha_anterior;
+    } else {
+      // COD_MANC (Manchester) fica a cargo do Kroda.
+      nivel_saida = bit_val;
+    }
+
+    digitalWrite(LED_PIN, nivel_saida ? HIGH : LOW);
+    nivel_linha_anterior = nivel_saida;
+
     bit_atual++;
   } else {
     // Fim da transmissão
     transmitindo = false;
     bit_atual = 0;
     digitalWrite(LED_PIN, LOW); // Garante estado de repouso
+    nivel_linha_anterior = LOW;
     Serial.println("Transmissao concluida.");
   }
 }
 
 void preparar_frame(char* msg, uint8_t tamanho, uint8_t codificacao) {
   uint16_t idx = 0;
+
+  // Guarda a codificação escolhida para que a ISR saiba como tratar o payload/CRC
+  codificacao_atual_tx = codificacao;
   
   // 1. Preâmbulo
   for(int i=0; i<4; i++) buffer_tx[idx++] = PREAMBLE[i];

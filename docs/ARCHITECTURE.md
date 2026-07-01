@@ -52,3 +52,15 @@ Para mensagens de 64 caracteres, um CRC-8 é estatisticamente falho.
 ## 4. Sincronismo Inicial (Auto-Baud)
 O preâmbulo foi estendido para 4 bytes (`10101010` x4). 
 *   **Decisão (Próxima Tarefa):** O RX não assumirá que o TX está enviando a 50ms exatos (devido às tolerâncias dos cristais das placas e atraso da luz). O RX anotará via `micros()` cada transição do preâmbulo e tirará a média matemática desse tempo na hora para inferir em qual "Baud Rate" real ele deve programar seu próprio `Timer1` para ouvir o restante do pacote.
+
+---
+
+## 5. Codificação NRZ-I (Payload/CRC)
+
+### Por que NRZ-I e como foi implementado
+O NRZ-I é uma codificação **diferencial**: em vez de o nível do LED representar o valor do bit diretamente (como no NRZ-L), o bit 1 significa "inverte o estado da linha" e o bit 0 significa "mantém o estado da linha".
+
+*   **Decisão:** O Preâmbulo, o SFD e o Cabeçalho continuam sempre em NRZ-L puro (48 bits fixos), pois o receptor precisa decodificar essa parte sem ainda saber qual codificação foi escolhida. Somente o Payload e o CRC comutam para NRZ-I quando selecionado no cabeçalho.
+*   **TX:** a interrupção de transmissão (`isr_transmite_bit`) mantém uma variável de estado (`nivel_linha_anterior`) com o último nível físico enviado. Ao entrar no payload em NRZ-I, essa variável já contém o último nível do cabeçalho (NRZ-L), servindo como ponto de partida coerente para as inversões.
+*   **RX:** o receptor compara cada nova leitura do LDR com a leitura anterior (`nivel_fisico_anterior`). Mudança de nível decodifica como bit 1; nível mantido decodifica como bit 0.
+*   **[Preencher depois de testar na bancada]:** comparação prática entre NRZ-I e NRZ-L quanto à robustez frente à inércia do LDR — sequências com muitos bits 1 geram mais transições de estado, o que pode ser mais sensível à lentidão de decaimento do sensor do que o NRZ-L.

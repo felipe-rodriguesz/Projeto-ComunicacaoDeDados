@@ -4,6 +4,15 @@
 #define LDR_PIN A0
 #define BIT_TIME_US 50000 // 50ms = 20 bps
 
+// Tipos de Codificação 
+#define COD_NRZL 0
+#define COD_NRZI 1
+#define COD_MANC 2
+
+// Preambulo (4 bytes) + SFD (1 byte) + Header (1 byte) = 6 bytes = 48 bits
+// sempre decodificados em NRZ-L, independente da codificação escolhida.
+#define BITS_FIXOS_NRZL 48
+
 // Limiar de decisão do LDR
 uint16_t limiar_adc = 0;
 
@@ -32,6 +41,10 @@ uint8_t byte_montado = 0;
 // Propriedades do Frame
 uint8_t tamanho_payload = 0;
 uint8_t codificacao = 0; // 0=NRZL, 1=NRZI, 2=MANC
+
+// Estado necessário para decodificar NRZ-I
+volatile uint8_t nivel_fisico_anterior = 0;   // último nível (0/1) lido do LDR
+volatile uint32_t bits_totais_recebidos = 0;  // contador de bits do frame atual
 
 void setup() {
   Serial.begin(9600);
@@ -85,6 +98,8 @@ void loop() {
       estado = LENDO_PREAMBULO;
       bit_count = 0;
       byte_montado = 0;
+      bits_totais_recebidos = 0;
+      nivel_fisico_anterior = 0;
       Serial.println("Detectado Preamble! Sincronizando...");
     }
   }
@@ -97,10 +112,24 @@ void loop() {
     long soma = 0;
     for(int i=0; i<3; i++) soma += analogRead(LDR_PIN);
     uint16_t leitura = soma / 3;
-    
-    // Etapa 1: Decodificação NRZ-L (usada obrigatoriamente no cabeçalho e preambulo)
-    bit_atual_val = (leitura > limiar_adc) ? 1 : 0;
-    
+    uint8_t nivel_fisico = (leitura > limiar_adc) ? 1 : 0;
+
+    if (bits_totais_recebidos < BITS_FIXOS_NRZL || codificacao == COD_NRZL) {
+      // Preambulo + SFD + Header sempre NRZ-L. Payload/CRC tambem, se essa
+      // foi a codificacao escolhida (comportamento original, preservado).
+      bit_atual_val = nivel_fisico;
+    } else if (codificacao == COD_NRZI) {
+      // NRZ-I: mudou de nivel em relacao a amostra anterior -> bit 1
+      //         manteve o mesmo nivel -> bit 0
+      bit_atual_val = (nivel_fisico != nivel_fisico_anterior) ? 1 : 0;
+    } else {
+      // COD_MANC (Manchester) fica a cargo do Kroda.
+      bit_atual_val = nivel_fisico;
+    }
+
+    nivel_fisico_anterior = nivel_fisico;
+    bits_totais_recebidos++;
+
     // Monta o byte (MSB primeiro)
     byte_montado = (byte_montado << 1) | bit_atual_val;
     bit_count++;
@@ -183,4 +212,6 @@ void finaliza_pacote() {
 void reseta_rx() {
   estado = ESPERA_SYNC;
   Timer1.stop();
+  bits_totais_recebidos = 0;
+  nivel_fisico_anterior = 0;
 }
