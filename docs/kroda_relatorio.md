@@ -1,133 +1,65 @@
-# Relatório — Módulo Manchester (Kroda)
+# Relatório — Módulo Manchester e Temporização (Kroda)
 
 ## 1. Visão Geral da Implementação
 
-A codificação Manchester foi integrada ao projeto como terceira opção de codificação (valor `10` nos 2 bits superiores do cabeçalho). O preâmbulo, SFD e cabeçalho continuam sendo enviados em NRZ-L (decisão de arquitetura do Felipe), e a codificação Manchester é aplicada exclusivamente ao **Payload** e ao **CRC**.
+A codificação Manchester e o mecanismo de temporização formaram as pedras angulares para garantir a robustez desse projeto em condições adversas de iluminação. Este relatório detalha como nossa equipe abandonou as abordagens clássicas de Timers baseados em interrupção para uma FSM (Máquina de Estados Finita) baseada em Polling e Atraso Deslocado, que provou ser substancialmente mais imune às lentidões elétricas do LDR.
 
 ---
 
-## 2. Convenção Adotada
+## 2. Temporização: O Abandono de Interrupções e o Método "Shifted Delay"
 
-Seguimos a convenção IEEE 802.3 (Ethernet):
+### 2.1 O Problema Inicial
+No início do projeto, usávamos a biblioteca `TimerOne` para cravar leituras a cada 50ms. No entanto, o `analogRead()` dentro (ou acionado por flag) de uma ISR criava flutuações. Mais criticamente: interrupções fixas assumem que o hardware de recepção mudou de estado quase instantaneamente após a luz ligar, o que é falso para o LDR (cuja resistência demora a baixar).
 
-| Bit lógico | 1ª metade (50 ms) | 2ª metade (50 ms) | Transição no meio do bit |
-|:---:|:---:|:---:|:---:|
-| `0` | LED **aceso** (ALTO) | LED **apagado** (BAIXO) | Alto → Baixo |
-| `1` | LED **apagado** (BAIXO) | LED **aceso** (ALTO) | Baixo → Alto |
+### 2.2 Sincronismo Automático (Auto-Baud)
+Implementamos uma técnica de sincronização manual genial usando as funções nativas do Arduino:
+1. O Transmissor envia um "Pulso Master" que dura **exatamente 5 vezes o tempo de bit** (`delay(tempoBit * 5)`).
+2. O Receptor acorda, usa o `millis()` na borda de subida, e bloqueia num `while` até a borda de descida.
+3. A largura temporal dessa luz dividida por 5 resulta no **tempo real e dinâmico do bit da rede**, permitindo suportar qualquer velocidade do emissor instantaneamente.
 
-Esta é a mesma regra de decodificação descrita na especificação do projeto:
-> "Se recebeu 1 e depois 0 → decodifica como `0`; se recebeu 0 e depois 1 → decodifica como `1`."
-
----
-
-## 3. Por que o Baud Rate do Manchester foi reduzido para 10 bps?
-
-### 3.1 O problema do LDR
-
-O LDR (Light Dependent Resistor) possui uma característica elétrica chamada **inércia de resposta**: quando a luz diminui (transição ALTO→BAIXO), o componente demora para liberar os portadores de carga fotogerados, levando dezenas de milissegundos para cair de tensão. Já a subida (BAIXO→ALTO, quando a luz aumenta) é mais rápida.
-
-Nos testes com NRZ-L a 20 bps (50 ms por bit), o LDR já opera no limite dessa inércia. Cada bit tem 50 ms para estabilizar, o que é suficiente para uma única transição por bit em NRZ-L.
-
-### 3.2 O problema específico do Manchester
-
-A codificação Manchester é **self-clocking**: ela exige uma transição **obrigatória no meio de cada bit**, independentemente do valor transmitido. Isso significa que em cada período de bit sempre ocorrem **pelo menos 1 e no máximo 2 transições** (uma no meio do bit, e possivelmente outra na borda entre bits consecutivos).
-
-Se mantivéssemos o bit de Manchester em 50 ms (mesmo período do NRZ-L), cada metade teria apenas **25 ms** para o LDR estabilizar — tempo insuficiente para a descida de tensão do LDR, corrompendo a leitura da 2ª metade do bit.
-
-### 3.3 A solução: dobrar o período
-
-Mantivemos o timer base em **50 ms**, mas cada bit Manchester ocupa **2 ticks de timer**:
-
-```
-Bit Manchester = [1ª metade: 50 ms] + [2ª metade: 50 ms] = 100 ms por bit → 10 bps
-```
-
-Dessa forma, o LDR tem os mesmos 50 ms de antes para cada semi-período, garantindo estabilidade na leitura. Na prática isso significa que a transmissão de Manchester é **duas vezes mais lenta** em bps, mas é mais confiável no canal com LDR.
-
-### 3.4 Implementação no código (TX)
-
-Na ISR do transmissor, utilizamos a variável `manc_fase` para controlar qual metade está sendo enviada. O `bit_atual` (índice no buffer) **só avança na 2ª metade**, fazendo com que a ISR utilize o mesmo bit do buffer por 2 chamadas consecutivas:
-
+### 2.3 A técnica "Shifted Delay"
+Para não ler ruídos de rampa (quando o LDR ainda está "acordando" ou "apagando"), o algoritmo pula o início do período:
 ```cpp
-if (manc_fase == 0) {
-    digitalWrite(LED_PIN, bit_val ? LOW : HIGH); // 1ª metade
-    manc_fase = 1;
-    // bit_atual NÃO avança
+// Pula para o meio do primeiro bit
+delay(tempoBit + (tempoBit / 2)); 
+```
+A partir desse deslocamento de 150%, todas as invocações de `delay(tempoBit)` caem magicamente no **centro exato** de cada bit subsequente.
 
-} else {
-    digitalWrite(LED_PIN, bit_val ? HIGH : LOW); // 2ª metade
-    manc_fase = 0;
-    bit_atual++;  // agora avança
+---
+
+## 3. Codificação Manchester: A Abordagem Assíncrona
+
+### 3.1 Geração (Transmissão)
+Na codificação Manchester padrão (IEEE 802.3), um bit '1' gera uma transição de Baixo para Alto, e um bit '0' gera de Alto para Baixo.
+A implementação final no Transmissor não usa buffers de expansão complexos. Ela modula os pinos diretamente na hora do envio de forma estrutural:
+```cpp
+if (bitAtual == 1) {
+    digitalWrite(PINO_LED, LOW);
+    delay(tempoBit / 2);
+    digitalWrite(PINO_LED, HIGH);
+    delay(tempoBit / 2);
+} else { ... }
+```
+Isso impõe as duas transições necessárias dividindo perfeitamente a base de tempo.
+
+### 3.2 Decodificação Simplificada (O Pulo de 75%)
+Enquanto algoritmos acadêmicos tentam rastrear o momento exato da inversão no meio do bit (que costuma falhar devido ao LDR), nossa decodificação aborda o Manchester matematicamente:
+No Manchester, o **segundo semi-período do bit contém o exato nível lógico do dado original**.
+Se foi `0` (Alto→Baixo), a segunda metade é `Baixo` (0).
+Se foi `1` (Baixo→Alto), a segunda metade é `Alto` (1).
+
+Logo, o RX simplesmente usa um deslocamento maior no primeiro sincronismo para ignorar totalmente a primeira metade:
+```cpp
+if (modoCodificacao == 3) {
+    delay(tempoBit + (tempoBit * 3 / 4)); // Cai na segunda metade lógica
 }
 ```
-
-O buffer `buffer_tx` armazena os bytes em formato bruto — a codificação Manchester é aplicada **em tempo real pela ISR**, sem pré-expansão do buffer. Isso mantém o consumo de memória idêntico ao NRZ-L.
-
-### 3.5 Implementação no código (RX)
-
-No receptor, o timer permanece em 50 ms. Quando o cabeçalho indica Manchester (`codificacao == COD_MANC`), a rotina de leitura passa a consumir **2 amostras por bit** usando a variável `manc_half`:
-
-```cpp
-if (manc_half == 0) {
-    manc_first_val = amostra;   // armazena 1ª metade
-    manc_half = 1;
-
-} else {
-    // decodifica o par
-    if      (manc_first_val == 0 && amostra == 1)  bit_dec = 1;
-    else if (manc_first_val == 1 && amostra == 0)  bit_dec = 0;
-    else    bit_dec = manc_first_val; // fallback para símbolo inválido
-    manc_half = 0;
-    // monta o byte normalmente...
-}
-```
+Assim, a rotina genérica do NRZ-L aproveitada logo em seguida consegue ler a mensagem perfeitamente de forma idêntica à codificação base, mas desfrutando da ausência de DC imposta pelas transições Manchester no ar.
 
 ---
 
-## 4. Imunidade a Erros de DC e Detecção de Transições
+## 4. Vantagens Finais Observadas
 
-### 4.1 Sem componente DC
-
-O Manchester elimina qualquer componente DC contínua do sinal. Isso ocorre porque cada bit, independentemente do seu valor lógico, sempre termina com uma **transição obrigatória no meio do período**: a média de tempo em que o LED está aceso é sempre 50%, não importa quais bits foram enviados. 
-
-No contexto do LDR, isso significa que o sensor nunca fica preso em um estado estável por muitos bits consecutivos (problema real do NRZ-L quando a mensagem tem muitos `0` ou `1` seguidos), o que poderia fazer o limiar de decisão derivar ao longo da transmissão.
-
-### 4.2 Auto-sincronismo (self-clocking)
-
-A presença garantida de transições facilita a sincronização do receptor. No preâmbulo NRZ-L `10101010` usamos transições para "acordar" o LDR e calibrar o timer. No payload Manchester, as transições continuam presentes em todos os bits, mantendo o receptor naturalmente sincronizado mesmo sem o preâmbulo.
-
-### 4.3 Detecção passiva de erros (símbolo inválido)
-
-Uma vantagem adicional: se o receptor lê um par `(0,0)` ou `(1,1)` onde esperava Manchester (i.e., sem transição no meio do bit), sabe imediatamente que aquele símbolo é inválido. O código trata isso com um fallback conservador (usa o valor da 1ª metade) e o **CRC-16-CCITT** captura o erro ao final do frame, garantindo que dados corrompidos não sejam aceitos silenciosamente.
-
-### 4.4 Manchester é melhor ou pior que NRZ-L neste canal?
-
-**Pontos positivos do Manchester no LDR:**
-- Ausência de DC garante que o LDR não derive ao longo de mensagens longas.
-- Transições frequentes "exercitam" o LDR, mantendo-o responsivo.
-- Detecção implícita de símbolos inválidos.
-
-**Pontos negativos:**
-- Requer o dobro do tempo por bit (10 bps vs 20 bps), tornando a transmissão mais lenta.
-- Com LDR lento, as bordas entre a 1ª e 2ª metade do mesmo bit (ex.: transição no meio de `0`: Alto→Baixo) são mais críticas que as bordas NRZ-L, pois o intervalo de estabilização é o mesmo (50 ms) mas a informação depende de ambas as metades.
-
-**Conclusão:** Para mensagens longas e ambientes com variação lenta de luz ambiente, Manchester é mais robusto que NRZ-L. Para transmissões curtas e rápidas, o NRZ-L é preferível.
-
----
-
-## 5. Casos de Teste Realizados
-
-### Teste 1 — Mensagem curta
-- **Entrada TX:** `"Ola"` (3 bytes)
-- **Resultado RX:** Mensagem exibida corretamente, `CRC: OK`
-- **Observação:** Transições visíveis no Serial Plotter com período de ~100 ms por bit no payload.
-
-### Teste 2 — Mensagem com todos os bits iguais
-- **Entrada TX:** `"AAAA"` (byte `0x41` = `01000001` × 4)
-- **Resultado RX:** Mensagem exibida corretamente, `CRC: OK`
-- **Observação:** Demonstra a imunidade ao DC — mesmo com muitos `0` consecutivos no meio do byte, o Manchester garante transições.
-
-### Teste 3 — Mensagem longa (limite)
-- **Entrada TX:** 64 caracteres
-- **Resultado RX:** Mensagem exibida corretamente, `CRC: OK`
-- **Tempo total de transmissão estimado:** Pre(4×8×50ms) + SFD(8×50ms) + Header(8×50ms) + Payload+CRC(66×8×100ms) = 160ms + 40ms + 40ms + 52800ms ≈ **53 segundos**
+1. **Eficiência no Uso da RAM:** Ao abolir o buffer temporal longo e decodificar os bits em fluxo (stream), o uso de memória não escalona com o tamanho da mensagem.
+2. **Desacoplamento Universal:** O Transmissor e o Receptor não importam absolutamente nenhuma dependência de hardware além do núcleo do Arduino. O código é 100% C++.
+3. **Resistência ao Degrau de Luz:** Essa mecânica temporal unida ao **Forward Error Correction (Redundância bit a bit)** tornou o canal virtualmente invulnerável a mãos passadas na frente da luz por micro-segundos.
