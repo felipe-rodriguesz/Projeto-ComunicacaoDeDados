@@ -1,0 +1,22 @@
+# Arduino IDE e arquivos locais do editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Builds e arquivos temporários
+build/
+.pio/
+*.o
+*.a
+*.elf
+*.hex
+*.eep
+*.map
+*.tmp
+*.bak
+
+# Arquivos do sistema operacional
+.DS_Store
+Thumbs.db

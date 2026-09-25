@@ -4,7 +4,7 @@ Bem-vindo à área de desenvolvimento! Para evitar conflitos de código durante 
 
 ## 🧑‍🤝‍🧑 Papéis e Responsabilidades
 
-*   **Felipe (Gerente do Projeto):** Integração principal (branch `main`). Responsável pela lógica de Sincronismo Inicial via auto-baud (`micros()`) e pela consolidação física dos testes.
+*   **Felipe (Gerente do Projeto):** Integração principal (branch `main`). Responsável pela lógica de Sincronismo Inicial via auto-baud (`millis()`) e pela consolidação física dos testes.
 *   **Elder (Especialista NRZ-I):** Responsável por abrir branches e codificar a transição e memória de estados do modo NRZ-I no TX e RX.
 *   **Kroda (Especialista Manchester):** Responsável por abrir branches e lidar com as lógicas de alteração e leitura na metade do tempo do baud rate base no TX e RX.
 
@@ -30,8 +30,8 @@ Siga os seguintes passos para contribuir no seu módulo:
 
 ## 🛠️ Regras de Ouro no Código
 
-*   **Não use a classe `String`:** Não utilize `String("Hello")`. O Uno tem pouca memória. Use a formatação tradicional baseada em `char array[]`.
-*   **Não coloque `analogRead` ou `Serial.print` dentro das ISR (Interrupções):** O Timer1 congela o microcontrolador. Use sempre o conceito de Flags (variáveis `volatile bool`), e trate o evento fora da interrupção (dentro do `loop()`).
+*   **Uso de `String`:** Os sketches atuais usam a classe `String` para entrada e montagem da mensagem. Ao alterar essa parte, considere o limite de memória do Uno e avalie o consumo de memória.
+*   **Temporização atual:** Os sketches atuais usam polling e atrasos bloqueantes; não usam `TimerOne` nem ISR. Se uma contribuição futura introduzir interrupções, mantenha as rotinas de interrupção curtas e não chame `analogRead` ou `Serial.print` dentro delas.
 *   **Comente sua matemática:** Se você fez `total_bits = (tamanho * 8) * 2` porque é Manchester, coloque um comentário explicando. O professor poderá ler nosso código e perguntar os motivos.
 
 ## 📝 Documentação Obrigatória

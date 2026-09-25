@@ -2,7 +2,7 @@
 
 ## 1. Visão Geral da Implementação
 
-A codificação Manchester e o mecanismo de temporização formaram as pedras angulares para garantir a robustez desse projeto em condições adversas de iluminação. Este relatório detalha como nossa equipe abandonou as abordagens clássicas de Timers baseados em interrupção para uma FSM (Máquina de Estados Finita) baseada em Polling e Atraso Deslocado, que provou ser substancialmente mais imune às lentidões elétricas do LDR.
+A codificação Manchester e o mecanismo de temporização foram partes importantes deste projeto. Este relatório registra a implementação da equipe, que substituiu a abordagem inicial com Timer por leitura bloqueante baseada em polling e atraso deslocado. A recepção atual é sequencial e bloqueante; não implementa uma FSM explícita.
 
 ---
 
@@ -12,10 +12,10 @@ A codificação Manchester e o mecanismo de temporização formaram as pedras an
 No início do projeto, usávamos a biblioteca `TimerOne` para cravar leituras a cada 50ms. No entanto, o `analogRead()` dentro (ou acionado por flag) de uma ISR criava flutuações. Mais criticamente: interrupções fixas assumem que o hardware de recepção mudou de estado quase instantaneamente após a luz ligar, o que é falso para o LDR (cuja resistência demora a baixar).
 
 ### 2.2 Sincronismo Automático (Auto-Baud)
-Implementamos uma técnica de sincronização manual genial usando as funções nativas do Arduino:
-1. O Transmissor envia um "Pulso Master" que dura **exatamente 5 vezes o tempo de bit** (`delay(tempoBit * 5)`).
-2. O Receptor acorda, usa o `millis()` na borda de subida, e bloqueia num `while` até a borda de descida.
-3. A largura temporal dessa luz dividida por 5 resulta no **tempo real e dinâmico do bit da rede**, permitindo suportar qualquer velocidade do emissor instantaneamente.
+O mecanismo de sincronização usa funções nativas do Arduino:
+1. O transmissor envia um pulso de calibração com duração definida como cinco tempos de bit (`delay(tempoBit * 5)`).
+2. O receptor detecta o nível por polling e mede a duração com `millis()`.
+3. A duração medida é dividida por cinco para estimar o tempo de bit. A estimativa tem resolução limitada e depende do polling e da resposta do LDR; não implica suporte a qualquer velocidade.
 
 ### 2.3 A técnica "Shifted Delay"
 Para não ler ruídos de rampa (quando o LDR ainda está "acordando" ou "apagando"), o algoritmo pula o início do período:
@@ -23,7 +23,7 @@ Para não ler ruídos de rampa (quando o LDR ainda está "acordando" ou "apagand
 // Pula para o meio do primeiro bit
 delay(tempoBit + (tempoBit / 2)); 
 ```
-A partir desse deslocamento de 150%, todas as invocações de `delay(tempoBit)` caem magicamente no **centro exato** de cada bit subsequente.
+A partir desse deslocamento, as leituras seguintes avançam em intervalos de `tempoBit`. O instante real de amostragem depende da detecção do início e da resposta do canal óptico.
 
 ---
 
@@ -48,18 +48,18 @@ No Manchester, o **segundo semi-período do bit contém o exato nível lógico d
 Se foi `0` (Alto→Baixo), a segunda metade é `Baixo` (0).
 Se foi `1` (Baixo→Alto), a segunda metade é `Alto` (1).
 
-Logo, o RX simplesmente usa um deslocamento maior no primeiro sincronismo para ignorar totalmente a primeira metade:
+Na implementação atual, o RX usa um deslocamento maior antes da primeira amostragem para ler na segunda metade do primeiro bit de dados:
 ```cpp
 if (modoCodificacao == 3) {
     delay(tempoBit + (tempoBit * 3 / 4)); // Cai na segunda metade lógica
 }
 ```
-Assim, a rotina genérica do NRZ-L aproveitada logo em seguida consegue ler a mensagem perfeitamente de forma idêntica à codificação base, mas desfrutando da ausência de DC imposta pelas transições Manchester no ar.
+Assim, a rotina de amostragem por nível também é usada para os dados Manchester. O RX não valida explicitamente a transição central. Start e stop são níveis convencionais, sem codificação Manchester. O resultado depende da temporização e do comportamento do canal óptico.
 
 ---
 
 ## 4. Vantagens Finais Observadas
 
-1. **Eficiência no Uso da RAM:** Ao abolir o buffer temporal longo e decodificar os bits em fluxo (stream), o uso de memória não escalona com o tamanho da mensagem.
-2. **Desacoplamento Universal:** O Transmissor e o Receptor não importam absolutamente nenhuma dependência de hardware além do núcleo do Arduino. O código é 100% C++.
-3. **Resistência ao Degrau de Luz:** Essa mecânica temporal unida ao **Forward Error Correction (Redundância bit a bit)** tornou o canal virtualmente invulnerável a mãos passadas na frente da luz por micro-segundos.
+1. **Leitura em fluxo:** A recepção monta os bytes durante a leitura, sem armazenar um buffer temporal longo.
+2. **Dependências:** Os sketches usam as funções do núcleo Arduino e não incluem bibliotecas externas.
+3. **Observação de bancada:** O comportamento físico depende da montagem e das condições do canal. O FEC reduz determinados erros nas representações do payload, mas não torna o enlace imune a interrupções ou ruído.
